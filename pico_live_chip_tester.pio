@@ -1,0 +1,162 @@
+;
+; Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+;
+; SPDX-License-Identifier: BSD-3-Clause
+;
+
+.program ym3012_dac
+
+; for man+exp:
+    set x, 12            ; Preload bit counter, delay until eye of first data bit
+    wait 0 pin 1        ; Wait for SAM HIGH // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING change required on JT51: wait 0 pin 1
+    wait 1 pin 1        ; Wait for SAM LOW // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING change required on JT51: wait 1 pin 1
+    ; ignore first three bits, as specified in data sheet
+    wait 1 pin 2        ; Wait for clock HIGH
+    wait 0 pin 2        ; Wait for clock LOW
+    wait 1 pin 2        ; Wait for clock HIGH
+    wait 0 pin 2        ; Wait for clock LOW
+    wait 1 pin 2        ; Wait for clock HIGH
+bitloop: ; Loop x times
+    wait 0 pin 2        ; Wait for clock LOW
+    wait 1 pin 2        ; Wait for clock HIGH
+    in pins, 1          ; Sample data
+    jmp x-- bitloop     ;
+
+; for linear s16:
+;    set x, 15            ; Preload bit counter
+;    wait 0 pin 1        ; Wait for SAM HIGH
+;    wait 1 pin 1        ; Wait for SAM LOW
+;bitloop: ; Execute following code x+1 times
+;    wait 1 pin 2        ; Wait for clock HIGH
+;    in pins, 1          ; Sample data
+;    wait 0 pin 2        ; Wait for clock LOW
+;    jmp x-- bitloop     ;
+
+% c-sdk {
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
+
+// #define YM3012_CLK 2000000
+#define YM3012_CLK 1790000
+#define JT51 1
+// #define NEGATE_EXP 1
+// #define LINEAR_PCM_S16_INPUT 1
+// #define DEBUG 1
+// #define DEV_IS_AN_IDIOT 1
+
+static inline void ym3012_dac_init(PIO pio, uint sm, uint offset, uint pin_base) {
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 3, false);
+    pio_gpio_init(pio, pin_base);
+//     gpio_pull_up(pin_base);
+
+    pio_sm_config c = ym3012_dac_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, pin_base);
+    // Shift existing values to the right when new value comes in
+    // The YM3012 receives D0 first, which is the least significant bit
+#if LINEAR_PCM_S16_INPUT
+    sm_config_set_in_shift(&c, true, true, 16); // signed 16-bit linear, shift to right
+#else
+    sm_config_set_in_shift(&c, true, true, 13); // man+exp, 10+3 bits, shift to right
+#endif
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX); // appears to be necessary??
+    float div = (float)clock_get_hz(clk_sys) / (YM3012_CLK*8); // TODO: 4 * actual clock rate would be nice // "For example, the YM2151 internally divides the clock by 2, and has 32 operators to iterate through. Thus, for a nominal input clock of 3.58MHz, you end up at around a 55.9kHz sample rate." https://github.com/aaronsgiles/ymfm/blob/main/README.md
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+//experimental:
+static inline uint16_t ym3012_dac_get_sample(PIO pio, uint sm) {
+    // 10-bit read from the FIFO (data is left-justified)
+    uint16_t data_and_exp, data, result, leading_ones;
+    uint8_t exp;
+    io_rw_32 *rxfifo_shift = (io_rw_32*)&(pio->rxf[sm]);
+    while (pio_sm_is_rx_fifo_empty(pio, sm))
+        tight_loop_contents();
+    uint16_t rxfifo_contents = *rxfifo_shift; // HACK. If we don't read this twice we may get a stale?? value with the last bit sometimes missing. (HOWEVER reading thrice we get something stale again. Though maybe we're just a little late when reading the third time?)
+//     (void) rxfifo_contents;
+#ifdef LINEAR_PCM_S16_INPUT
+#ifdef DEBUG
+    return (uint16_t)((int16_t)(*rxfifo_shift >> 16)); // don't want that ugly offset when we're debugging
+#else
+    return (uint16_t)((int16_t)(*rxfifo_shift >> 16)+32768); // FIXME not 32768?
+#endif // DEBUG
+#else // !LINEAR_PCM_S16_INPUT:
+
+    data_and_exp = (uint16_t)(*rxfifo_shift >> 19);
+//     pio_sm_set_enabled(pio, sm, false);
+#ifdef NEGATE_EXP // not needed on JT51
+    exp = ~((data_and_exp) >> 10) & 0b111; // top 3 bits, negated
+#else
+    exp = ((data_and_exp >> 10) & 0b111); // top 3 bits
+#endif
+    data = data_and_exp & 0b1111111111; // lower 10 bits
+    if (exp == 0) { // probably doesn't happen on the JT51 at least, and shouldn't happen on YM2151 according to datasheet
+        result = 0; // according to jt51_exp2lin.v
+    } else {
+// #ifdef DEV_IS_AN_IDIOT
+//         result = data / exp;
+// #else
+//      result = data / (1>>exp);
+#ifdef JT51
+        result = (data << (exp-1));
+#else
+        result = data << 6;
+        result = result / (2<<(exp-1));
+//         result = data;
+//         result = (data >> (exp-1));
+#endif
+#ifdef JT51
+        // for signed numbers (first bit of mantissa is 1) we need to sign extend by adding a bunch of ones
+        // the number of ones to be added is: 16 (because uint16_t) - (left_shift_amount (== exp-1) + 10 (mantissa length))
+        // we can create a value with the specified number of leading ones by left shifting a value that is all ones.
+        // however, we need to shift by (16-number_of_desired_leading_ones) (e.g., 0xffff with 16 leading ones can only be achieved by left shifting by 0)
+        // 16 - (16-((exp-1)+10)) = 16 - (16 - (exp-1) - 10) = 0 - -(exp-1) - -10 = (exp-1) + 10 = exp + 9
+        leading_ones = 0xffff << ((exp-1) + 10);
+        if (data & (1<<9))
+            result |= leading_ones;
+        //for jt51:
+        result = (int16_t)result + 32768; // seems appropriate for jt51 at least // TODO last thing we changed, haven't tested this yet! // TODO: also check spreadsheet, looks like we should be adding exp-1 zeros at the end, and if man begins with a 0, 16-length zeros at the start, otherwise 16-length ones at the start.
+#endif
+        
+//         result = data * (2<<(exp-1));
+// #endif // LINEAR_PCM_S16_INPUT
+    }
+    // example output of below printf demonstrating the stale output when reading the first and third times
+    // first read: 0
+    // third read: 715653120 or 2863136768
+    // second read (>> 19): always 5461
+//     0 715653120 5461 341 2 170
+//     0 2863136768 5461 341 2 170
+//     0 2863136768 5461 341 2 170
+//     0 715653120 5461 341 2 170
+//     0 2863136768 5461 341 2 170
+//     0 2863136768 5461 341 2 170
+//     0 715653120 5461 341 2 170
+//     0 715653120 5461 341 2 170
+//     0 715653120 5461 341 2 170
+//     0 2863136768 5461 341 2 170
+//     printf("%u %u %u %u %u %u\n", rxfifo_contents, *rxfifo_shift, data_and_exp, data, exp, result);
+// pio_sm_set_enabled(pio, sm, true);
+    return result;// * 16;
+#endif
+}
+
+// known working:
+static inline uint16_t ym3012_dac_get_sample2(PIO pio, uint sm) {
+    // 10-bit read from the FIFO (data is left-justified)
+    uint16_t data_and_exp, data, result;
+    uint8_t exp;
+    io_rw_32 *rxfifo_shift = (io_rw_32*)&(pio->rxf[sm]);
+    while (pio_sm_is_rx_fifo_empty(pio, sm))
+        tight_loop_contents();
+    data_and_exp = (uint16_t)(*rxfifo_shift >> 19);
+    exp = ((~data_and_exp >> 10) & 0b111); // top 3 bits, negated
+    data = data_and_exp & 0b1111111111; // lower 10 bits
+    //exp = exp == 0 ? 1 : exp;
+    result = data / exp;
+    printf("%u %u %u %u\n", *rxfifo_shift, data_and_exp, data, exp, result);
+    return result;
+}
+%}
