@@ -25,6 +25,8 @@
 // #define REPORT_SLOW_CAPTURE
 #define DEBUG
 
+// TODO: could easily drive the RX/TX status LEDs from the PIO, would save precious CPU cycles
+// could probably even be done using the PIO's side-set feature
 #define STATUS_LEDS
 #ifdef STATUS_LEDS
 #define LED_RX 16
@@ -38,8 +40,10 @@ uint8_t g_memory[1] = { UNKNOWN };
 uint8_t address_buffer[196608] = { UNKNOWN };
 bool g_is_read = false, g_is_write = false;
 bool g_din = false, g_dout = false;
-uint16_t g_state_at_ras = POISON16, g_state_at_cas = POISON16;
-uint8_t g_ras_address = POISON8, g_cas_address = POISON8;
+// uint16_t g_state_at_ras = POISON16, g_state_at_cas = POISON16;
+// uint8_t g_ras_address = POISON8, g_cas_address = POISON8;
+uint16_t g_state_at_ras = 0, g_state_at_cas = 0;
+uint8_t g_ras_address = 0, g_cas_address = 0;
 uint32_t g_waited = 0;
 
 int main() {
@@ -49,6 +53,7 @@ int main() {
 
     gpio_init_mask(ALL_REGULAR_GPIO_PINS);
     gpio_set_dir_masked(ALL_REGULAR_GPIO_PINS, GPIO_IN);
+    gpio_set_function(13, GPIO_FUNC_PIO0); // TODO: use constant or something
     stdio_init_all();
     sleep_ms(5000);
     printf("Hello world\n");
@@ -101,6 +106,7 @@ int main() {
         }
 //         printf("%05d: %u*256+%u = %u\n", i, address_buffer[i], address_buffer[i+1], address_buffer[i]*256+address_buffer[i+1]);
     }
+    printf("g_waited: %d\n", g_waited);
     return 0;
 #endif
 #ifdef BORING_DEBUG

@@ -5,11 +5,27 @@
     ; pin 3: cas
     ; pin 4: we
     ; pin 5-12: address pins
+    ; pin 13: signal to this sm from other sm
+//     set x, 31
+discard_old_data:
+//     in null, 32
+    mov isr, null
+//     in x, 5
+//     in x, 5
+//     in x, 5
+//     in x, 5
+//     in x, 5
+//     in x, 5
 .wrap_target
     wait 0 pin 2
-    in pins, 13 ; read all pins
-    push
+    in pins, 13 ; latch all pins
     wait 1 pin 2
+    ; that would be it normally; we'd just push and push forever
+    ;  but unfortunately we can't push once our fifo is full!
+    ; so let's only push when needed.
+    ; the other sm tells us if it's needed by setting a certain pin high
+    jmp pin discard_old_data ; jump back to loop (discarding all read data first) if other SM wants us to
+    push ; otherwise, push latched data
 .wrap
 
 .program cas_trigger
@@ -19,12 +35,16 @@
     ; pin 3: cas
     ; pin 4: we
     ; pin 5-12: address pins
+    set pins, 1 ; tell ras SM that it should discard its data
 .wrap_target
     wait 0 pin 3
     in pins, 13 ; read all pins
+    set pins, 0 ; tell ras SM that it should push
     wait 1 pin 3
     in pins, 1 ; read dout again
     push
+//     wait 1 pin 2 // wait for ras high? may be needed. most systems wouldn't add much of a delay here though i think
+    set pins, 1 ; tell ras SM that it should discard its data
 .wrap
 
 % c-sdk {
@@ -37,13 +57,15 @@
 // #define PIO_CLK 125000000 // 125 MHz == 8 ns per clock cycle, possibly good enough
 
 static inline void ras_trigger_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
-    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 13, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 13+1, false); // 13 from RAM, 1 from other SM
     pio_gpio_init(pio, pin_base);
 
     pio_sm_config c = ras_trigger_program_get_default_config(offset);
     sm_config_set_in_pins(&c, pin_base);
     // Shift existing values to the right when new value comes in
     sm_config_set_in_shift(&c, true, false, 0); // shift to right, no auto-push
+//     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX); // appears to be necessary??
+    sm_config_set_jmp_pin(&c, 13); // TODO: use constant or something
 #ifdef CONSTANT_DIV
     float div = CONSTANT_DIV;
 #else
@@ -57,12 +79,15 @@ static inline void ras_trigger_program_init(PIO pio, uint sm, uint offset, uint 
 
 static inline void cas_trigger_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
     pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 13, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, 13, 1, true); // TODO: use constant or something
     pio_gpio_init(pio, pin_base);
 
     pio_sm_config c = cas_trigger_program_get_default_config(offset);
     sm_config_set_in_pins(&c, pin_base);
-    // Shift existing values to the right when new value comes in
+    // Shift eto xisting values to the right when new value comes in
     sm_config_set_in_shift(&c, true, false, 0); // shift to right, no auto-push
+    sm_config_set_set_pins(&c, 13, 1); // TODO: use constant or something
+//     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX); // appears to be necessary??
 #ifdef CONSTANT_DIV
     float div = CONSTANT_DIV;
 #else
@@ -78,10 +103,23 @@ static inline void get_bus_at_cas(PIO pio, uint sm1, uint sm2) {
     io_rw_32 *rxfifo_shift1 = (io_rw_32*)&(pio->rxf[sm1]);
     io_rw_32 *rxfifo_shift2 = (io_rw_32*)&(pio->rxf[sm2]);
 
+//     while (pio_sm_is_rx_fifo_empty(pio, sm1)) {
+//         g_waited++;
+//         tight_loop_contents();
+//     }
+//     g_state_at_ras = *rxfifo_shift1 >> 19;
+//     g_ras_address = g_state_at_ras >> 5;
+//     return;
+
     while (pio_sm_is_rx_fifo_empty(pio, sm2)) {
-        g_waited++;
+//         g_state_at_ras = *rxfifo_shift1;// >> 19;
+//         g_waited++;
         tight_loop_contents();
     }
+//     while (!pio_sm_is_rx_fifo_empty(pio, sm1)) {
+//         g_waited++;
+//         g_state_at_ras = *rxfifo_shift1;// >> 19;
+//     }
     /* Our RAS FIFO should be full by the time the CAS FIFO is full */
 //     uint16_t rxfifo_contents1 = *rxfifo_shift1; // HACK See above
 //     uint16_t rxfifo_contents2 = *rxfifo_shift2; // HACK See above
@@ -89,6 +127,7 @@ static inline void get_bus_at_cas(PIO pio, uint sm1, uint sm2) {
     g_state_at_cas = *rxfifo_shift2 >> 18;
     g_ras_address = g_state_at_ras >> 5;
     g_cas_address = (g_state_at_cas >> 5) & 0xff; // filter out second dout
+    return;
     g_is_read = (g_state_at_cas >> 4) & 1;
     g_is_write = !g_is_read;
     g_din = (g_state_at_cas>>1) & 1;
