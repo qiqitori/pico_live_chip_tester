@@ -35,12 +35,12 @@ discard_old_data:
     ; pin 3: cas
     ; pin 4: we
     ; pin 5-12: address pins
-    set pins, 1 ; tell ras SM that it should discard its data
+    set pins, 1 ; tell "RAS state machine" that it should discard its data
 .wrap_target
     wait 0 pin 3
     in pins, 13 ; read all pins
-    set pins, 0 ; tell ras SM that it should push
-    wait 1 pin 3
+    set pins, 0 ; tell ras SM that it should push // TODO: could use side-set
+    wait 1 pin 3 ; wait for CAS high
     in pins, 1 ; read dout again
     push
 //     wait 1 pin 2 // wait for ras high? may be needed. most systems wouldn't add much of a delay here though i think
@@ -127,7 +127,7 @@ static inline void get_bus_at_cas(PIO pio, uint sm1, uint sm2) {
     g_state_at_cas = *rxfifo_shift2 >> 18;
     g_ras_address = g_state_at_ras >> 5;
     g_cas_address = (g_state_at_cas >> 5) & 0xff; // filter out second dout
-    return;
+//     return;
     g_is_read = (g_state_at_cas >> 4) & 1;
     g_is_write = !g_is_read;
     g_din = (g_state_at_cas>>1) & 1;

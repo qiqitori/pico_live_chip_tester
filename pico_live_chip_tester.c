@@ -36,8 +36,11 @@
 #define LED_COMPARISON_SUCCESSFUL 20
 #endif
 
-uint8_t g_memory[1] = { UNKNOWN };
+#ifndef DEBUG
+uint8_t g_memory[65536] = { UNKNOWN };
+#else
 uint8_t address_buffer[196608] = { UNKNOWN };
+#endif
 bool g_is_read = false, g_is_write = false;
 bool g_din = false, g_dout = false;
 // uint16_t g_state_at_ras = POISON16, g_state_at_cas = POISON16;
@@ -58,7 +61,9 @@ int main() {
     sleep_ms(5000);
     printf("Hello world\n");
 
-//     memset(g_memory, UNKNOWN, 65536);
+#ifndef DEBUG
+    memset(g_memory, UNKNOWN, 65536);
+#endif
 
 #ifdef STATUS_LEDS
     bool led_rx_state = false, led_tx_state = false, led_comp_state = false;
@@ -158,12 +163,12 @@ int main() {
                     gpio_put(LED_ERROR, true);
 #endif
                     printf("Possibly bad memory at %u*256+%u = %u, have %u but read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_din);
-                    printf("Successful comparisons up to now: %u\n", n_successful_comps);
-                    printf("Read ops up to now: %u\n", n_reads);
-                    printf("Write ops up to now: %u\n", n_writes);
+                    printf("Successful comparisons up to now: %lu\n", n_successful_comps);
+                    printf("Read ops up to now: %lu\n", n_reads);
+                    printf("Write ops up to now: %lu\n", n_writes);
                     break;
                 } else {
-                    printf("Successful read at %u*256+%u = %u, have %u and read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_din);
+//                     printf("Successful read at %u*256+%u = %u, have %u and read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_din);
                     n_successful_comps++;
                     led_comp_state = !led_comp_state;
                     gpio_put(LED_COMPARISON_SUCCESSFUL, led_comp_state);
