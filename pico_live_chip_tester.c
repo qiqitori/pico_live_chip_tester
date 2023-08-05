@@ -157,12 +157,12 @@ int main() {
                 led_rx_state = false; // makes it easier to see if LED is just never updated
 #endif
             if (*memory_under_test != UNKNOWN) {
-                if (*memory_under_test != g_din) {
+                if (*memory_under_test != g_dout) {
 #ifdef STATUS_LEDS
                     gpio_put(LED_NO_ERRORS, false);
                     gpio_put(LED_ERROR, true);
 #endif
-                    printf("Possibly bad memory at %u*256+%u = %u, have %u but read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_din);
+                    printf("Possibly bad memory at %u*256+%u = %u, have %u but read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_dout);
                     printf("Successful comparisons up to now: %lu\n", n_successful_comps);
                     printf("Read ops up to now: %lu\n", n_reads);
                     printf("Write ops up to now: %lu\n", n_writes);
