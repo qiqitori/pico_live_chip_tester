@@ -16,22 +16,10 @@
 #include "hardware/irq.h"  // interrupts
 
 #define ALL_REGULAR_GPIO_PINS 0b00011100011111111111111111111111
-
 #define PIN_BASE 0
 #define POISON16 0x5555
 #define POISON8 0x55
 #define UNKNOWN 2
-
-#define PRINT_ERROR_THRESHOLD 2
-#define CORRECT_ERRORS
-// #define REPORT_SLOW_CAPTURE
-
-#define DEBUG
-
-// TODO: could easily drive the RX/TX status LEDs from the PIO, would save precious CPU cycles
-// could probably even be done using the PIO's side-set feature
-#define STATUS_LEDS
-// #define VERBOSE_STATUS_LEDS
 
 #ifdef STATUS_LEDS
 #define LED_RX 16

@@ -99,7 +99,9 @@ static inline void get_bus_at_cas(PIO pio, uint sm1, uint sm2) {
     io_rw_32 *rxfifo_shift2 = (io_rw_32*)&(pio->rxf[sm2]);
 
     while (pio_sm_is_rx_fifo_empty(pio, sm2)) {
+#ifdef DEBUG
         g_waited++;
+#endif
         tight_loop_contents();
     }
 //     uint16_t rxfifo_contents1 = *rxfifo_shift1; // HACK See above
