@@ -47,6 +47,16 @@ discard_old_data:
 #include "hardware/gpio.h"
 #include "pico_live_chip_tester.h"
 
+extern uint8_t g_memory[65536];
+extern bool g_is_read;
+extern bool g_din;
+extern bool g_dout;
+extern uint16_t g_state_at_ras;
+extern uint16_t g_state_at_cas;
+extern uint8_t g_ras_address;
+extern uint8_t g_cas_address;
+extern uint32_t g_waited;
+
 #define CONSTANT_DIV 1.0
 // #define PIO_CLK 200000000 // 200 MHz == 5 ns per clock cycle
 // #define PIO_CLK 125000000 // 125 MHz == 8 ns per clock cycle, possibly good enough

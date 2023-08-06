@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pico_live_chip_tester.h"
+
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/pio.h"
@@ -55,6 +57,11 @@ int main() {
     stdio_init_all();
     sleep_ms(5000);
     printf("Hello world\n");
+#ifndef DEBUG
+    printf("Operating in non-debug mode\n");
+#else
+    printf("Operating in debug mode\n");
+#endif
 #ifndef SWAP_RAS_AND_CAS_ADDRESSES
     printf("Memory calculation is RAS address * 256 + CAS address\n");
 #else
@@ -98,14 +105,14 @@ int main() {
 
 #ifdef DEBUG
 //     uint16_t prev_cas = 0;
-    for (int i = 0; i < 120000; i += 3) {
+    for (uint32_t i = 0; i < sizeof(address_buffer); i += 3) {
         g_waited = 0;
         get_bus_at_cas(pio, sm1, sm2);
         address_buffer[i] = g_ras_address;
         address_buffer[i+1] = g_cas_address;
         address_buffer[i+2] = g_waited << 24 | (int)!g_is_read << 2 | g_din << 1 | g_dout;
     }
-    for (int i = 0; i < 120000; i += 3) {
+    for (int i = 0; i < sizeof(address_buffer); i += 3) {
         if ((address_buffer[i+2] >> 2) & 1) {
             printf("%06d: write %u to %u, waited %u\n", i, (address_buffer[i+2] >> 1) & 1, address_buffer[i]*256 + address_buffer[i+1], address_buffer[i+2] >> 24);
         } else {
