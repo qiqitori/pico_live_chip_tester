@@ -51,7 +51,7 @@ discard_old_data:
 // #define PIO_CLK 200000000 // 200 MHz == 5 ns per clock cycle
 // #define PIO_CLK 125000000 // 125 MHz == 8 ns per clock cycle, possibly good enough
 
-static inline void ras_trigger_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
+static void ras_trigger_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
     pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 13+1, false); // 13 from RAM, 1 from other SM
     pio_gpio_init(pio, pin_base);
 
