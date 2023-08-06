@@ -22,12 +22,17 @@
 #define POISON8 0x55
 #define UNKNOWN 2
 
+#define PRINT_ERROR_THRESHOLD 2
+#define CORRECT_ERRORS
 // #define REPORT_SLOW_CAPTURE
+
 #define DEBUG
 
 // TODO: could easily drive the RX/TX status LEDs from the PIO, would save precious CPU cycles
 // could probably even be done using the PIO's side-set feature
 #define STATUS_LEDS
+// #define VERBOSE_STATUS_LEDS
+
 #ifdef STATUS_LEDS
 #define LED_RX 16
 #define LED_TX 17
@@ -41,7 +46,7 @@ uint8_t g_memory[65536] = { UNKNOWN };
 #else
 uint8_t address_buffer[196608] = { UNKNOWN };
 #endif
-bool g_is_read = false, g_is_write = false;
+bool g_is_read = false;
 bool g_din = false, g_dout = false;
 // uint16_t g_state_at_ras = POISON16, g_state_at_cas = POISON16;
 // uint8_t g_ras_address = POISON8, g_cas_address = POISON8;
@@ -53,31 +58,43 @@ int main() {
     uint32_t n_successful_comps = 0;
     uint32_t n_reads = 0;
     uint32_t n_writes = 0;
+    uint32_t n_errors = 0;
 
     gpio_init_mask(ALL_REGULAR_GPIO_PINS);
     gpio_set_dir_masked(ALL_REGULAR_GPIO_PINS, GPIO_IN);
     gpio_set_function(13, GPIO_FUNC_PIO0); // TODO: use constant or something
+    gpio_set_function(14, GPIO_FUNC_PIO0); // TODO: use constant or something
     stdio_init_all();
     sleep_ms(5000);
     printf("Hello world\n");
+#ifndef SWAP_RAS_AND_CAS_ADDRESSES
+    printf("Memory calculation is RAS address * 256 + CAS address\n");
+#else
+    printf("Memory calculation is CAS address * 256 + RAS address\n");
+#endif
 
 #ifndef DEBUG
     memset(g_memory, UNKNOWN, 65536);
 #endif
 
 #ifdef STATUS_LEDS
+#ifdef VERBOSE_STATUS_LEDS
     bool led_rx_state = false, led_tx_state = false, led_comp_state = false;
-
     gpio_init(LED_RX);
     gpio_init(LED_TX);
-    gpio_init(LED_NO_ERRORS);
-    gpio_init(LED_ERROR);
+    gpio_init(LED_COMPARISON_SUCCESSFUL);
     gpio_set_dir(LED_RX, GPIO_OUT);
     gpio_set_dir(LED_TX, GPIO_OUT);
-    gpio_set_dir(LED_NO_ERRORS, GPIO_OUT);
-    gpio_set_dir(LED_ERROR, GPIO_OUT);
+    gpio_set_dir(LED_COMPARISON_SUCCESSFUL, GPIO_OUT);
     gpio_put(LED_RX, led_rx_state);
     gpio_put(LED_TX, led_tx_state);
+    gpio_put(LED_COMPARISON_SUCCESSFUL, led_comp_state);
+#endif
+
+    gpio_init(LED_NO_ERRORS);
+    gpio_init(LED_ERROR);
+    gpio_set_dir(LED_NO_ERRORS, GPIO_OUT);
+    gpio_set_dir(LED_ERROR, GPIO_OUT);
     gpio_put(LED_NO_ERRORS, true);
     gpio_put(LED_ERROR, false);
 #endif
@@ -94,27 +111,24 @@ int main() {
 #ifdef DEBUG
 //     uint16_t prev_cas = 0;
     for (int i = 0; i < 120000; i += 3) {
-//         g_waited = 0;
+        g_waited = 0;
         get_bus_at_cas(pio, sm1, sm2);
-//         if (g_waited == 0) {
-//             printf("%d: capture code is too slow (g_waited == %u)\n", i, g_waited);
-//         }
         address_buffer[i] = g_ras_address;
         address_buffer[i+1] = g_cas_address;
-        address_buffer[i+2] = (int)g_is_write << 2 | g_din << 1 | g_dout;
+        address_buffer[i+2] = g_waited << 24 | (int)!g_is_read << 2 | g_din << 1 | g_dout;
     }
     for (int i = 0; i < 120000; i += 3) {
-        if (address_buffer[i+2] >> 2) {
-            printf("%06d: write %u to %u\n", i, (address_buffer[i+2] >> 1) & 1, address_buffer[i]*256 + address_buffer[i+1]);
+        if ((address_buffer[i+2] >> 2) & 1) {
+            printf("%06d: write %u to %u, waited %u\n", i, (address_buffer[i+2] >> 1) & 1, address_buffer[i]*256 + address_buffer[i+1], address_buffer[i+2] >> 24);
         } else {
-            printf("%06d: read %u from %u\n", i, address_buffer[i+2] & 1, address_buffer[i]*256 + address_buffer[i+1]);
+            printf("%06d: read %u from %u, waited %u\n", i, address_buffer[i+2] & 1, address_buffer[i]*256 + address_buffer[i+1], address_buffer[i+2] >> 24);
         }
 //         printf("%05d: %u*256+%u = %u\n", i, address_buffer[i], address_buffer[i+1], address_buffer[i]*256+address_buffer[i+1]);
     }
-    printf("g_waited: %d\n", g_waited);
     return 0;
 #endif
 #ifdef BORING_DEBUG
+    // NOTE: this code may be old
     for (;;) {
         get_bus_at_cas(pio, sm1, sm2);
         printf("g_state_at_ras: %04x\n", g_state_at_ras);
@@ -139,22 +153,26 @@ int main() {
         }
 #endif
         memory_under_test = &g_memory[g_ras_address*256+g_cas_address];
-        if (g_is_write) {
+        if (!g_is_read) {
             n_writes++;
 #ifdef STATUS_LEDS
+#ifdef VERBOSE_STATUS_LEDS
             led_rx_state = !led_rx_state;
             gpio_put(LED_RX, led_rx_state);
             if (led_tx_state)
                 led_tx_state = false; // makes it easier to see if LED is just never updated
 #endif
+#endif
             *memory_under_test = g_din;
         } else {
             n_reads++;
 #ifdef STATUS_LEDS
+#ifdef VERBOSE_STATUS_LEDS
             led_tx_state = !led_tx_state;
             gpio_put(LED_TX, led_tx_state);
             if (led_rx_state)
                 led_rx_state = false; // makes it easier to see if LED is just never updated
+#endif
 #endif
             if (*memory_under_test != UNKNOWN) {
                 if (*memory_under_test != g_dout) {
@@ -162,16 +180,31 @@ int main() {
                     gpio_put(LED_NO_ERRORS, false);
                     gpio_put(LED_ERROR, true);
 #endif
-                    printf("Possibly bad memory at %u*256+%u = %u, have %u but read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_dout);
-                    printf("Successful comparisons up to now: %lu\n", n_successful_comps);
-                    printf("Read ops up to now: %lu\n", n_reads);
-                    printf("Write ops up to now: %lu\n", n_writes);
-                    break;
+#if PRINT_ERROR_THRESHOLD > 0
+                    if (n_errors >= PRINT_ERROR_THRESHOLD) {
+#endif
+                        printf("Possibly bad memory at %u*256+%u = %u, have %u but read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_dout);
+                        printf("Successful comparisons up to now: %lu\n", n_successful_comps);
+                        printf("Read ops up to now: %lu\n", n_reads);
+                        printf("Write ops up to now: %lu\n", n_writes);
+                        // break;
+#if PRINT_ERROR_THRESHOLD > 0
+                    }
+                    n_errors++;
+#endif
+#ifdef CORRECT_ERRORS
+                    *memory_under_test = g_dout;
+#endif
+//                     break;
                 } else {
 //                     printf("Successful read at %u*256+%u = %u, have %u and read %u\n", g_ras_address, g_cas_address, g_ras_address*256+g_cas_address, *memory_under_test, g_din);
                     n_successful_comps++;
+#ifdef STATUS_LEDS
+#ifdef VERBOSE_STATUS_LEDS
                     led_comp_state = !led_comp_state;
                     gpio_put(LED_COMPARISON_SUCCESSFUL, led_comp_state);
+#endif
+#endif
                 }
             }
         }

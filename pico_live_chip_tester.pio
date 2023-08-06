@@ -6,16 +6,8 @@
     ; pin 4: we
     ; pin 5-12: address pins
     ; pin 13: signal to this sm from other sm
-//     set x, 31
 discard_old_data:
-//     in null, 32
     mov isr, null
-//     in x, 5
-//     in x, 5
-//     in x, 5
-//     in x, 5
-//     in x, 5
-//     in x, 5
 .wrap_target
     wait 0 pin 2
     in pins, 13 ; latch all pins
@@ -38,10 +30,13 @@ discard_old_data:
     set pins, 1 ; tell "RAS state machine" that it should discard its data
 .wrap_target
     wait 0 pin 3
-    in pins, 13 ; read all pins
-    set pins, 0 ; tell ras SM that it should push // TODO: could use side-set
-    wait 1 pin 3 ; wait for CAS high
+    in pins, 13; read all pins
+    set pins, 0 [9]; tell RAS SM that it should push and then wait 9 cycles // TODO: could use side-set
+    set pins, 2 // DEBUG -- allows us to see spikes on oscilloscope that indicate when dout is sampled // requires fast oscilloscope
     in pins, 1 ; read dout again
+    set pins, 0 // DEBUG -- allows us to see spikes on oscilloscope that indicate when dout is sampled // requires fast oscilloscope
+    wait 1 pin 3 ; wait for CAS high
+    wait 1 pin 2 ; wait for RAS high to make sure we're in sync with "RAS state machine"
     push
 //     wait 1 pin 2 // wait for ras high? may be needed. most systems wouldn't add much of a delay here though i think
     set pins, 1 ; tell ras SM that it should discard its data
@@ -77,16 +72,16 @@ static inline void ras_trigger_program_init(PIO pio, uint sm, uint offset, uint 
     pio_sm_set_enabled(pio, sm, true);
 }
 
-static inline void cas_trigger_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
+static void cas_trigger_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
     pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 13, false);
-    pio_sm_set_consecutive_pindirs(pio, sm, 13, 1, true); // TODO: use constant or something
+    pio_sm_set_consecutive_pindirs(pio, sm, 13, 2, true); // TODO: use constant or something
     pio_gpio_init(pio, pin_base);
 
     pio_sm_config c = cas_trigger_program_get_default_config(offset);
     sm_config_set_in_pins(&c, pin_base);
     // Shift eto xisting values to the right when new value comes in
     sm_config_set_in_shift(&c, true, false, 0); // shift to right, no auto-push
-    sm_config_set_set_pins(&c, 13, 1); // TODO: use constant or something
+    sm_config_set_set_pins(&c, 13, 2); // TODO: use constant or something
 //     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX); // appears to be necessary??
 #ifdef CONSTANT_DIV
     float div = CONSTANT_DIV;
@@ -103,33 +98,22 @@ static inline void get_bus_at_cas(PIO pio, uint sm1, uint sm2) {
     io_rw_32 *rxfifo_shift1 = (io_rw_32*)&(pio->rxf[sm1]);
     io_rw_32 *rxfifo_shift2 = (io_rw_32*)&(pio->rxf[sm2]);
 
-//     while (pio_sm_is_rx_fifo_empty(pio, sm1)) {
-//         g_waited++;
-//         tight_loop_contents();
-//     }
-//     g_state_at_ras = *rxfifo_shift1 >> 19;
-//     g_ras_address = g_state_at_ras >> 5;
-//     return;
-
     while (pio_sm_is_rx_fifo_empty(pio, sm2)) {
-//         g_state_at_ras = *rxfifo_shift1;// >> 19;
-//         g_waited++;
+        g_waited++;
         tight_loop_contents();
     }
-//     while (!pio_sm_is_rx_fifo_empty(pio, sm1)) {
-//         g_waited++;
-//         g_state_at_ras = *rxfifo_shift1;// >> 19;
-//     }
-    /* Our RAS FIFO should be full by the time the CAS FIFO is full */
 //     uint16_t rxfifo_contents1 = *rxfifo_shift1; // HACK See above
 //     uint16_t rxfifo_contents2 = *rxfifo_shift2; // HACK See above
     g_state_at_ras = *rxfifo_shift1 >> 19;
     g_state_at_cas = *rxfifo_shift2 >> 18;
+#ifndef SWAP_RAS_AND_CAS_ADDRESSES
     g_ras_address = g_state_at_ras >> 5;
     g_cas_address = (g_state_at_cas >> 5) & 0xff; // filter out second dout
-//     return;
+#else
+    g_cas_address = g_state_at_ras >> 5;
+    g_ras_address = (g_state_at_cas >> 5) & 0xff; // filter out second dout
+#endif
     g_is_read = (g_state_at_cas >> 4) & 1;
-    g_is_write = !g_is_read;
     g_din = (g_state_at_cas>>1) & 1;
     g_dout = (g_state_at_cas>>13) & 1; // from the second reading
 }
